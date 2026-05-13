@@ -1,17 +1,73 @@
 # 第1章：WebAPIの基本
 
 > 執筆者：王金橋
-> 最終更新：2026-04-18
+> 最終更新：2026-05-13
 
 ## この章で学ぶこと
 
 この章では、ユーザーが入力したもう文字列をURLに変換してAPIからデータを取得し、そのデータをリスクとして表示します。
 
-## 模範コードの全体像
-mport SwiftUI
+## どんなアプリを作るのか？
 
-// MARK: - データモデル
+音楽を検索するアプリを作る。ユーザーがアーティスト名または曲名を入力して検索ボタンを押すと、検索結果が画面に表示される。検索結果の中から曲をタップすると詳細ページに遷移し、アルバムアートワーク・曲名・アーティスト名・アルバム名・価格を確認できる。
 
+---
+
+## ステップ1：このアプリが何をするのかを整理する
+
+ユーザーがキーワードを入力し、iTunes APIからデータを取得し、リストに表示し、詳細ページへ遷移できる。
+
+---
+
+## ステップ2：データを特定する（データモデリング）
+
+このアプリで「流れる」データは、APIが返すJSONに含まれる。各楽曲には、曲名・アーティスト名・アルバム名・アートワーク画像のURL・価格がある。
+
+そのため、これらのフィールドを保持する`Song`構造体が必要になる。APIはリスト形式で返すため、それを包む`SearchResponse`も必要になる。
+
+---
+
+## ステップ3：状態を特定する（状態管理）
+
+画面はどのような条件で変化するのか？
+
+画面を動かす3つの状態：
+- 読み込み中 → ローディングスピナーを表示
+- 読み込み失敗 → エラーを表示
+- 読み込み成功 → リストを表示
+
+これら3つの状態はViewModelで一元管理する。
+
+---
+
+## ステップ4：画面を分割する（UIの階層化）
+
+画面はどの独立したパーツで構成されているか？
+- 検索バー（テキストフィールド＋ボタン）
+- コンテンツエリア（3つの状態に対応した3種類の表示）
+- リスト行（各楽曲の概要情報）
+- 詳細ページ（タップして詳細情報を表示）
+- エラーバナー（エラー発生時に表示）
+
+それぞれを独立したViewにし、互いに干渉しないようにする。
+
+---
+
+## ステップ5：ロジックをつなぐ（データフロー）
+
+ユーザーが検索ボタンをタップ → ViewModelがネットワークリクエストを送信 → 状態を更新 → UIが状態に応じて自動更新される。
+
+> これがMVVMの本質：ViewはUIの表示のみ担当し、ViewModelはデータとロジックのみ担当する。両者は状態バインディングを通じて自動的に同期される。
+
+---
+
+## 実装ステップ1：APIから返ってくるJSONはリスト形式なので、以下を書く：
+
+1. `struct SearchResponse`でデータを種類別に整理して保存する
+2. 2つのフィールドを含める：`resultCount`（楽曲数）と`results`（各楽曲の詳細情報：曲名・アーティスト名・アルバム名・価格など）
+3. 各楽曲の一意なID
+
+```swift
 struct SearchResponse: Codable {
     let results: [Song]
 }
@@ -20,97 +76,222 @@ struct Song: Codable, Identifiable {
     let trackId: Int
     let trackName: String
     let artistName: String
+    let collectionName: String?
     let artworkUrl100: String
     let previewUrl: String?
+    let trackPrice: Double?
+    let currency: String?
 
     var id: Int { trackId }
+```
+
+4. 各楽曲の価格処理ロジック（価格と通貨単位の両方が存在する場合は表示し、どちらかが欠けている場合は「価格不明」と表示する）
+
+```swift
+    var priceText: String {
+        guard let price = trackPrice, let currency = currency else {
+            return "価格不明"
+        }
+        return "\(currency) \(String(format: "%.0f", price))"
+    }
 }
+```
 
-// MARK: - メインビュー
+---
 
+## 実装ステップ2：誰が実際に処理を行うのか？
+
+Viewは表示のみを担当し、ネットワークリクエストは送信しない。そのため、以下を処理するViewModelが必要になる：
+1. ネットワークデータの処理
+2. ネットワークリクエストの送信
+3. エラーのハンドリング
+
+まず4つの変数が必要：検索結果、ユーザーが入力したキーワード、検索状態の変化、エラーメッセージ
+
+```swift
+@Observable
+class MusicSearchViewModel {
+    var songs: [Song] = []
+    var searchText: String = ""
+    var isLoading: Bool = false
+    var errorMessage: String?
+}
+```
+
+次に、発生しうる4種類のエラーを定義する：URL構築の失敗、ネットワークエラー、JSONのデコード失敗、検索結果なし
+
+```swift
+enum SearchError: LocalizedError {
+    case invalidURL
+    case networkError(Error)
+    case decodingError(Error)
+    case noResults
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "検索URLの作成に失敗しました"
+        case .networkError(let error):
+            return "通信エラー: \(error.localizedDescription)"
+        case .decodingError:
+            return "データの読み取りに失敗しました"
+        case .noResults:
+            return "検索結果が見つかりませんでした"
+        }
+    }
+}
+```
+
+最後に検索ロジックを追加する：入力欄が空かどうかの確認 → 入力をURLセーフな文字列にエンコード → URLを構築 → リクエストを送信し、データを取得し、`SearchResponse`にデコード → 結果に応じて状態を更新
+
+```swift
+func searchMusic() async {
+    guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+
+    guard let encodedText = searchText.addingPercentEncoding(
+        withAllowedCharacters: .urlQueryAllowed
+    ) else {
+        errorMessage = SearchError.invalidURL.errorDescription
+        return
+    }
+
+    let urlString = "https://itunes.apple.com/search?term=\(encodedText)&media=music&country=jp&limit=25"
+
+    guard let url = URL(string: urlString) else {
+        errorMessage = SearchError.invalidURL.errorDescription
+        return
+    }
+
+    isLoading = true
+    errorMessage = nil
+
+    do {
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let response = try JSONDecoder().decode(SearchResponse.self, from: data)
+
+        if response.results.isEmpty {
+            errorMessage = SearchError.noResults.errorDescription
+            songs = []
+        } else {
+            songs = response.results
+        }
+    } catch let error as DecodingError {
+        errorMessage = SearchError.decodingError(error).errorDescription
+        songs = []
+    } catch {
+        errorMessage = SearchError.networkError(error).errorDescription
+        songs = []
+    }
+
+    isLoading = false
+}
+```
+
+---
+
+## 実装ステップ3：メイン画面 ContentView の構築
+
+ContentViewに表示するもの：
+1. 検索バー
+2. コンテンツエリア
+3. エラー表示エリア
+
+まず、ViewModelをViewに注入する。ViewはViewModelを通じて状態を読み取り、メソッドを呼び出す。
+
+```swift
 struct ContentView: View {
-    @State private var songs: [Song] = []
-    @State private var searchText: String = ""
-    @State private var isLoading: Bool = false
+    @State private var viewModel = MusicSearchViewModel()
 
     var body: some View {
         NavigationStack {
-            VStack {
-                // 検索バー
-                HStack {
-                    TextField("アーティスト名を入力", text: $searchText)
-                        .textFieldStyle(.roundedBorder)
+            VStack(spacing: 0) {
+                searchBar
 
-                    Button("検索") {
-                        Task {
-                            await searchMusic()
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(searchText.isEmpty)
+                if let errorMessage = viewModel.errorMessage {
+                    ErrorBanner(message: errorMessage)
                 }
-                .padding(.horizontal)
 
-                // 検索結果リスト
-                if isLoading {
-                    ProgressView("検索中...")
-                        .padding()
-                    Spacer()
-                } else if songs.isEmpty {
-                    ContentUnavailableView(
-                        "曲を検索してみよう",
-                        systemImage: "music.note",
-                        description: Text("アーティスト名を入力して検索ボタンを押してください")
-                    )
-                } else {
-                    List(songs) { song in
-                        SongRow(song: song)
-                    }
-                }
+                contentArea
             }
             .navigationTitle("Music Search")
         }
     }
-
-    // MARK: - API通信
-
-    func searchMusic() async {
-        guard let encodedText = searchText.addingPercentEncoding(
-            withAllowedCharacters: .urlQueryAllowed
-        ) else { return }
-
-        let urlString = "https://itunes.apple.com/search?term=\(encodedText)&media=music&country=jp&limit=25"
-
-        guard let url = URL(string: urlString) else { return }
-
-        isLoading = true
-
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let response = try JSONDecoder().decode(SearchResponse.self, from: data)
-            songs = response.results
-        } catch {
-            print("エラー: \(error.localizedDescription)")
-            songs = []
-        }
-
-        isLoading = false
-    }
 }
+```
 
-// MARK: - 曲の行ビュー
+検索バー：
+1. Returnキーを押しても、ボタンをタップしても検索が実行される
+2. 入力欄が空のとき、または読み込み中はボタンが無効になる
+3. 検索ボタンをタップしてから結果が表示されるまでの待機中も、アプリは引き続き操作できる
 
+```swift
+    private var searchBar: some View {
+        HStack {
+            TextField("アーティスト名を入力", text: $viewModel.searchText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit {
+                    Task { await viewModel.searchMusic() }
+                }
+
+            Button("検索") {
+                Task { await viewModel.searchMusic() }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(viewModel.searchText.isEmpty || viewModel.isLoading)
+        }
+        .padding()
+    }
+```
+
+コンテンツエリア：
+1. 検索結果の読み込み中はスピナーを表示する（ユーザー体験の向上）
+2. 楽曲リストが空の場合はプレースホルダー画面を表示する
+3. 楽曲リストを表示する
+
+```swift
+    @ViewBuilder
+    private var contentArea: some View {
+        if viewModel.isLoading {
+            Spacer()
+            ProgressView("検索中...")
+            Spacer()
+        } else if viewModel.songs.isEmpty {
+            ContentUnavailableView(
+                "曲を検索してみよう",
+                systemImage: "music.note",
+                description: Text("アーティスト名を入力して検索ボタンを押してください")
+            )
+        } else {
+            List(viewModel.songs) { song in
+                NavigationLink(destination: SongDetailView(song: song)) {
+                    SongRow(song: song)
+                }
+            }
+        }
+    }
+```
+
+---
+
+## 実装ステップ4：検索結果をタップした後の詳細情報
+
+SongRow：ユーザーが検索した後のリスト内、各行のスタイル定義。以下を含む：
+1. アルバムアートのサムネイル
+2. 曲名
+3. アーティスト名
+4. 価格
+
+```swift
 struct SongRow: View {
     let song: Song
 
     var body: some View {
         HStack(spacing: 12) {
             AsyncImage(url: URL(string: song.artworkUrl100)) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                image.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
-                Color.gray.opacity(0.3)
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.gray.opacity(0.2))
             }
             .frame(width: 60, height: 60)
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -119,185 +300,95 @@ struct SongRow: View {
                 Text(song.trackName)
                     .font(.headline)
                     .lineLimit(1)
-
                 Text(song.artistName)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+
+            Spacer()
+
+            Text(song.priceText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
     }
 }
-
-#Preview {
-    ContentView()
-}
-
-**このアプリは何をするものか：**
-
-音楽、歌手を検索できます
-
-## コードの詳細解説
-
-### データモデル（Codable構造体）
-
-struct SearchResponse: Codable {
-    let results: [Song]
-}
-
-struct Song: Codable, Identifiable {
-    let trackId: Int
-    let trackName: String
-    let artistName: String
-    let artworkUrl100: String
-    let previewUrl: String?
-
-    var id: Int { trackId }
-}
-
-**何をしているか：**
-APIから取得したJSONをSwiftUIが読めるSongに変換します。
-
-**なぜこう書くのか：**
-APIから返されたJSONの構造に対応して、一つ一つデコードします。
-
-**もしこう書かなかったら：**
-API取得したJSONをデコードできない、エラーになります。
-
+```
 
 ---
 
-### API通信の処理
+## 実装ステップ5：SongRowをタップした後に表示される画面
 
-    func searchMusic() async {
-        guard let encodedText = searchText.addingPercentEncoding(
-            withAllowedCharacters: .urlQueryAllowed
-        ) else { return }
+SongRowよりも大きなアートワークを表示し、情報もより詳細にする。また、アルバム名がない楽曲もあるため、`if let`でアンラップする必要がある。
 
-        let urlString = "https://itunes.apple.com/search?term=\(encodedText)&media=music&country=jp&limit=25"
-
-        guard let url = URL(string: urlString) else { return }
-
-        isLoading = true
-
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let response = try JSONDecoder().decode(SearchResponse.self, from: data)
-            songs = response.results
-        } catch {
-            print("エラー: \(error.localizedDescription)")
-            songs = []
-        }
-
-        isLoading = false
-    }
-}
-
-**何をしているか：**
-1. ユーザーが入力された文字列をURLエンコードします
-2. URLエンコードでitunesのAPIからデータを取得します
-3. 取得したデータをstruct SearchResponseでデコードしてSwiftの構造体にします
-
-
-**なぜこう書くのか：**
-1. ユーザーが入力した文字列をAPI認識できるURLに変換します
-2. APIから返ってきたJSONをSwiftで使える構造体に変換します
-
-
-**もしこう書かなかったら：**
-話が通じない
-
----
-
-### ビューの構成
-struct SongRow: View {
+```swift
+struct SongDetailView: View {
     let song: Song
 
     var body: some View {
-        HStack(spacing: 12) {
-            AsyncImage(url: URL(string: song.artworkUrl100)) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Color.gray.opacity(0.3)
-            }
-            .frame(width: 60, height: 60)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+        ScrollView {
+            VStack(spacing: 20) {
+                AsyncImage(url: URL(string: song.artworkUrl100)) { image in
+                    image.resizable().aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    ProgressView()
+                }
+                .frame(width: 200, height: 200)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .shadow(radius: 8)
 
-            VStack(alignment: .leading, spacing: 4) {
                 Text(song.trackName)
-                    .font(.headline)
-                    .lineLimit(1)
+                    .font(.title2)
+                    .bold()
 
                 Text(song.artistName)
-                    .font(.subheadline)
+                    .font(.title3)
                     .foregroundStyle(.secondary)
+
+                if let albumName = song.collectionName {
+                    Text(albumName)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Text(song.priceText)
+                    .font(.headline)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.blue.opacity(0.1))
+                    .clipShape(Capsule())
             }
+            .padding()
         }
-        .padding(.vertical, 4)
+        .navigationTitle("曲の詳細")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
+```
 
-**何をしているか：**
-Songのフィールドを取り出して、それぞれ対応するUIの位置に配置します
+---
 
-**なぜこう書くのか：**
-AsyncImageは非同期で画像を読み込むため、UIをブロックしない。
-HStackとVStackの組み合わせはSwiftUIの標準的なレイアウト方法で、構造が分かりやすく直感的である。
+## 実装ステップ6：エラー処理のロジック
 
-**もしこう書かなかったら：**
-AsyncImageを使わない：URLから画像を読み込めない
-placeholderを使わない：読み込み中に画面が空白になり、体験が悪い
-HStack/VStackを使わない：横に画像＋縦にテキストのレイアウトができない
+エラー処理ロジックを`struct ErrorBanner: View {}`にカプセル化し、ContentViewから直接呼び出せるようにする。
 
+```swift
+struct ErrorBanner: View {
+    let message: String
 
-## 新しく学んだSwiftの文法・API
-
-| 項目 | 説明 | 使用例 |
-|------|------|--------|
-|　Codable　| Swiftの構造体はJSONと自動的に相互変換できます | struct Song: Codable { ... }|
-| async/await | ネットワークリクエスト中でもUIをブロックせず、ユーザーは画面をスクロールしたりボタンを押したりでき、カクつかない | `let data = try await　URLSession.shared.data(from: url)|
-
-## 自分の実験メモ
-
-（模範コードを改変して試したことを書く）
-
-**実験1：**
-- やったこと：limit=25　→ limit=5改変して試した
-- 結果：検索結果が3件に減ります
-- わかったこと：リクエストで内容で取得データ量を制御できます
-
-**実験2：**
-- やったこと：.clipShape(RoundedRectangle(cornerRadius: 8)) → .clipShape(Circle())
-- 結果：アイコンが正円になります
-- わかったこと：SwiftUIはモディファイアの変更だけで直感的にUIを調整できる
-
-## AIに聞いて特に理解が深まった質問 TOP3
-
-1. **質問：**
-   実際の業務では、プログラマーは考え方とその実装の順序、そしてエラーが出ないようにすることを理解していれば十分で、各アイデアに対応する具体的なコードを全て覚えているわけではない、という理解であっていますか？
-
-   **得られた理解：**
-   プログラマーの仕事で最も重要なのはコードを暗記することではなく、そもそもそれは現実的でもない。重要なのはロジック構造と業務フローであり、頭の中に明確なフローチャートを持ち、コードの各ステップで何をすべきかを理解し、防御的プログラミングやエラーハンドリングの方法を把握することだ。エネルギーはアーキテクチャ思考や問題解決の考え方を鍛えることに使うべきである。
-   
-
-2. **質問：**
-   すべてのプログラマーの思考ロジックはこのような流れになっているのでしょうか？
-つまり、「何が欲しいか → どうやって取得するか → 取得した後どう処理するか → 処理した結果をどう表示するか」という理解でいいのでしょうか？
-
-   **得られた理解：**
-   本質的には同じで、まず頭の中で人間の思考と言語を使ってアイデアや目的、達成したい目標を明確にし、その上で大枠のフレームワークを構築し、さらに最小実行単位まで分解していく。最後に、Googleやフォーラム、AI、社内ドキュメントなどを活用して具体的なコードを書いていく。
-
-3. **質問：**
-   さっきの「何が欲しいか → どうやって取得するか → どう処理するか → どう表示するか」はデータ処理系の具体的なパターンに過ぎない。他の場面、例えばアルゴリズムやシステム設計では別の思考フレームワークになるが、「問題を分解する」という本質は同じ。では、アルゴリズムやシステム設計ではどのように考えるのか？
-
-   **得られた理解：**
-   アルゴリズムの思考：
-入力は何か → 出力は何か → 途中でどう変換するか → 時間計算量・空間計算量は許容範囲か
-　　システム設計の思考：
-ユーザー数はどれくらいか → データはどう保存するか → 各モジュールはどう役割分担するか → ボトルネックはどこか → どうスケールさせるか
-しかし本質は同じで、大きな問題を小さな問題に分解し、一つずつ解決していくこと。
+    var body: some View {
+        HStack {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text(message)
+                .font(.caption)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity)
+        .background(.red.opacity(0.1))
+    }
+}
 
 
 ## この章のまとめ
