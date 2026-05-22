@@ -26,4 +26,4 @@
 
 ## 相手のリポジトリに書いたIssueのURL
 
-https://github.com/xxxxx/xxxxx/issues/1
+https://github.com/bianyisyuan/swift-textbook-template/issues/1
