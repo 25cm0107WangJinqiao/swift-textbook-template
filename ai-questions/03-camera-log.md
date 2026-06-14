@@ -2,7 +2,7 @@
 
 ## 使用した生成AIツール
 
-（例：ChatGPT 無料版 / Claude 無料版 / Gemini など）
+ChatGPT 無料版
 
 ## 質問と回答の記録
 
