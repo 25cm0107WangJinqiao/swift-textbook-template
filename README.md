@@ -1,8 +1,8 @@
 # 📘 自分専用 Swiftプログラミング教科書
 
-> **氏名：** （ここに自分の名前を書く）
-> **学籍番号：** （ここに学籍番号を書く）
-> **作成開始日：** 2026年4月
+> **氏名：** 王金橋
+> **学籍番号：** 25cm0107
+> **作成開始日：** 2026年6月
 
 ---
 
@@ -19,8 +19,8 @@
 | 章 | テーマ | ファイル | 状態 |
 |---|--------|---------|------|
 | 第1章 | WebAPIの基本 | [chapters/01-webapi.md](chapters/01-webapi.md) | ✅  |
-| 第2章 | 地図アプリの基本 | [chapters/02-map.md](chapters/02-map.md) | 未着手 |
-| 第3章 | カメラの利用 | [chapters/03-camera.md](chapters/03-camera.md) | 未着手 |
+| 第2章 | 地図アプリの基本 | [chapters/02-map.md](chapters/02-map.md) |  ✅  |
+| 第3章 | カメラの利用 | [chapters/03-camera.md](chapters/03-camera.md) |  ✅  |
 | 第4章 | データの永続化 | [chapters/04-data-persistence.md](chapters/04-data-persistence.md) | 未着手 |
 | 第5章 | 機能統合の実践 | [chapters/05-integration.md](chapters/05-integration.md) | 未着手 |
 | 第6章 | ジェスチャー操作 | [chapters/06-gestures.md](chapters/06-gestures.md) | 未着手 |
